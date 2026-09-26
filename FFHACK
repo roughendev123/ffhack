@@ -439,8 +439,10 @@ exit /b
 
 :LOGIN
 del /q "%TEMP%\ff_u.txt" "%TEMP%\ff_s.txt" "%TEMP%\ff_res.txt" 2>nul
-> "%TEMP%\ff_u.txt" set /p _="  Usuario: "
-> "%TEMP%\ff_s.txt" set /p _="  Senha:   "
+set /p _="  Usuario: "
+> "%TEMP%\ff_u.txt" echo !_!
+set /p _="  Senha:   "
+> "%TEMP%\ff_s.txt" echo !_!
 call :HASH "%TEMP%\ff_s.txt"
 powershell -NoProfile -Command "$u=(gc '%TEMP%\ff_u.txt' -Raw).Trim(); $h='%H%'; $url='%USERS_URL%'; $key='%API_KEY%'; $us=$null; if($url -notlike '*COLE_O_ID*'){ try { $r=irm -Uri $url -Headers @{'X-Master-Key'=$key} -TimeoutSec 8; $us=$r.record.usuarios; $c=ConvertTo-Json -InputObject (@{usuarios=$us}) -Depth 6 -Compress; Set-Content -Path '%CACHE%' -Value $c } catch { if(Test-Path '%CACHE%'){ $us=(ConvertFrom-Json (gc '%CACHE%' -Raw)).usuarios; Write-Host '  [off-line: cache local]' } } }; if(-not $us -or $us.Count -eq 0){ Set-Content -Path '%TEMP%\ff_res.txt' -Value 'VAZIO' } else { $m=$null; foreach($x in $us){ if($x.usuario -eq $u -and $x.senha -eq $h){ $m=$x } }; if($m){ Set-Content -Path '%TEMP%\ff_res.txt' -Value ('OK|'+$m.nivel) } else { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO' } }"
 set LOG=
@@ -458,8 +460,10 @@ timeout /t 1 /nobreak >nul
 goto LOGIN
 
 :SETUP
-> "%TEMP%\ff_s.txt" set /p _="  PRIMEIRO USO - defina a senha do roughen: "
-> "%TEMP%\ff_s2.txt" set /p _="  Confira a senha: "
+set /p _="  PRIMEIRO USO - defina a senha do roughen: "
+> "%TEMP%\ff_s.txt" echo !_!
+set /p _="  Confira a senha: "
+> "%TEMP%\ff_s2.txt" echo !_!
 call :HASH "%TEMP%\ff_s.txt"
 set H1=%H%
 call :HASH "%TEMP%\ff_s2.txt"
@@ -676,8 +680,10 @@ powershell -NoProfile -Command "try { $us=(irm -Uri '%USERS_URL%' -Headers @{'X-
 goto RET
 
 :UNOVO
-> "%TEMP%\ff_nu.txt" set /p _="  Novo usuario (sem espacos): "
-> "%TEMP%\ff_ns.txt" set /p _="  Senha dele: "
+set /p _="  Novo usuario (sem espacos): "
+> "%TEMP%\ff_nu.txt" echo !_!
+set /p _="  Senha dele: "
+> "%TEMP%\ff_ns.txt" echo !_!
 call :HASH "%TEMP%\ff_ns.txt"
 powershell -NoProfile -Command "$u=(gc '%TEMP%\ff_nu.txt' -Raw).Trim(); $h='%H%'; try { $rec=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record; $existe=$false; foreach($x in $rec.usuarios){ if($x.usuario -eq $u){ $existe=$true } }; if($existe){ Set-Content -Path '%TEMP%\ff_res.txt' -Value 'JAEXISTE' } else { $rec.usuarios += [pscustomobject]@{usuario=$u;senha=$h;nivel='user'}; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'CRIADO' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO_NET' }"
 set /p R=<"%TEMP%\ff_res.txt"
@@ -701,7 +707,8 @@ goto RET
 :UPASS
 set /p MP="  Trocar senha de (Enter = voce): "
 if "%MP%"=="" set MP=%USER_ATUAL%
-> "%TEMP%\ff_ns.txt" set /p _="  Nova senha: "
+set /p _="  Nova senha: "
+> "%TEMP%\ff_ns.txt" echo !_!
 call :HASH "%TEMP%\ff_ns.txt"
 powershell -NoProfile -Command "try { $rec=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record; foreach($x in $rec.usuarios){ if($x.usuario -eq '%MP%'){ $x.senha='%H%' } }; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'TROCADA' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO_NET' }"
 set /p R=<"%TEMP%\ff_res.txt"
