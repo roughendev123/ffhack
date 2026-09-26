@@ -1,0 +1,715 @@
+: ==========================================================
+: FFHACK v4.1  -  Painel de usuarios + Depuracao Wi-Fi
+: Termux: bash FFHACK    CMD: copy FFHACK FFHACK.bat
+: obs: no Termux sai uma linha goto erro no inicio - normal
+: ==========================================================
+goto :SECAO_CMD 2>nul
+rm -f "./nul" 2>/dev/null
+
+#!/usr/bin/env bash
+# ====================== BASH / TERMUX ======================
+ADB="adb"
+PKG="com.dts.freefireth"
+SERVIDOR="https://roughendev123.github.io/ffhack"
+USERS_URL="https://api.jsonbin.io/v3/b/COLE_O_ID/latest"
+API_KEY="COLE_A_MASTER_KEY"
+Y_CAB=40; Y_PESC=46; Y_ACIMA=32
+CFG="$HOME/ffhack/config"
+LOCAL_DB="$HOME/ffhack/db.cache.json"
+DB='{"usuarios":[]}'
+W=0; H=0
+USER_ATUAL=""; NIVEL=""
+
+VERDE='\033[92m'; VERM='\033[91m'; AMAR='\033[93m'; CIANO='\033[96m'; NEGR='\033[1m'; FIM='\033[0m'
+msg()  { printf "${AMAR}[%s] %s${FIM}\n" "$(date +%H:%M:%S)" "$*"; }
+ok()   { printf "${VERDE}[OK] %s${FIM}\n" "$*"; }
+erro() { printf "${VERM}[ERRO] %s${FIM}\n" "$*"; }
+pausa(){ read -rp "  [Enter]..." _; }
+
+[ -f "$CFG" ] && { USERS_URL=$(sed -n 1p "$CFG"); API_KEY=$(sed -n 2p "$CFG"); }
+config_ok() { [[ "$USERS_URL" != *"COLE_O_ID"* ]]; }
+hash_s()    { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+
+# ---------------- banco de usuarios ----------------
+db_get() {
+  DB=""
+  if config_ok; then
+    local R
+    R=$(curl -fsSL -m 8 -H "X-Master-Key: $API_KEY" "$USERS_URL" 2>/dev/null)
+    DB=$(jq -c '.record' <<<"$R" 2>/dev/null)
+  fi
+  if [ -n "$DB" ]; then
+    mkdir -p ~/ffhack; echo "$DB" > "$LOCAL_DB"; return
+  fi
+  if [ -f "$LOCAL_DB" ]; then
+    DB=$(cat "$LOCAL_DB"); msg "Sem servidor agora - usando cache local."
+  else
+    DB='{"usuarios":[]}'
+  fi
+}
+
+db_put() {
+  DB="$1"
+  mkdir -p ~/ffhack; echo "$DB" > "$LOCAL_DB"
+  if config_ok && curl -fsSL -m 8 -X PUT "$USERS_URL" \
+      -H "X-Master-Key: $API_KEY" -H "Content-Type: application/json" \
+      --data-binary @"$LOCAL_DB" >/dev/null 2>&1; then
+    ok "Salvo no servidor de usuarios."
+  else
+    msg "Servidor de usuarios fora - salvo so no cache deste terminal."
+  fi
+}
+
+inicializar_painel() {
+  db_get
+  local N
+  N=$(jq '.usuarios | length' <<<"$DB")
+  if [ "$N" = "0" ]; then
+    clear; msg "PRIMEIRO USO - criando o administrador 'roughen'"
+    local S C H
+    read -rsp "  Senha do roughen: " S; echo
+    read -rsp "  Confirme:         " C; echo
+    [ "$S" = "$C" ] || { erro "Senhas diferentes."; sleep 1; return; }
+    H=$(hash_s "$S")
+    db_put "{\"usuarios\":[{\"usuario\":\"roughen\",\"senha\":\"$H\",\"nivel\":\"admin\"}]}"
+    ok "roughen criado (admin)."
+    sleep 1
+  fi
+}
+
+banner() {
+  printf "${NEGR}${CIANO}"
+  echo " ╔══════════════════════════════════════════╗"
+  echo " ║  FFHACK v4.1 — Painel + Depuração Wi-Fi  ║"
+  echo " ╚══════════════════════════════════════════╝"
+  printf "${FIM}"
+}
+
+login() {
+  local t=1 USR HS S HN
+  while [ $t -le 3 ]; do
+    clear; banner
+    echo "  Painel de acesso"
+    read -rp "  Usuário: " USR
+    HS=$(jq -r --arg u "$USR" '.usuarios[] | select(.usuario==$u) | .senha' <<<"$DB")
+    if [ -n "$HS" ]; then
+      read -rsp "  Senha:   " S; echo
+      HN=$(hash_s "$S")
+      if [ "$HS" = "$HN" ]; then
+        USER_ATUAL=$USR
+        NIVEL=$(jq -r --arg u "$USR" '.usuarios[] | select(.usuario==$u) | .nivel' <<<"$DB")
+        ok "Bem-vindo, $USR [$NIVEL]."
+        sleep 1
+        return
+      fi
+    fi
+    erro "Usuário ou senha inválida (tentativa $t de 3)."
+    t=$((t+1)); sleep 1
+  done
+  exit 1
+}
+
+# ---------------- area do roughen ----------------
+eh_admin() { [ "$NIVEL" = "admin" ]; }
+
+painel_usuario() {
+  eh_admin || { erro "Área restrita ao roughen."; pausa; return; }
+  while true; do
+    clear
+    echo "  PAINEL DE USUÁRIOS — roughen"
+    echo "   [n] Ver usuários   [v] Criar"
+    echo "   [a] Apagar         [s] Trocar senha"
+    echo "   [0] Voltar"
+    read -rp "  → " s
+    case $s in
+      n) jq -r '.usuarios[] | "  \(.usuario)   [\(.nivel)]"' <<<"$DB"; pausa ;;
+      v) novo_usuario ;;
+      a) apagar_usuario ;;
+      s) trocar_senha ;;
+      0) return ;;
+    esac
+  done
+}
+
+novo_usuario() {
+  clear; msg "Criar usuário"
+  local NU S H
+  read -rp "  Nome (sem espaços): " NU
+  [ ${#NU} -ge 3 ] || { erro "Nome curto demais."; return; }
+  if jq -e --arg u "$NU" '.usuarios[] | select(.usuario==$u)' <<<"$DB" >/dev/null; then
+    erro "Já existe esse nome."; return
+  fi
+  read -rsp "  Senha: " S; echo
+  H=$(hash_s "$S")
+  db_put "$(jq --arg u "$NU" --arg h "$H" '.usuarios += [{"usuario":$u,"senha":$h,"nivel":"user"}]' <<<"$DB")"
+  ok "'$NU' criado - ele acessa o hack inteiro logando em qualquer terminal."
+  pausa
+}
+
+apagar_usuario() {
+  read -rp "  Apagar usuário (roughen é protegido): " AU
+  [ "$AU" = "roughen" ] && { erro "O admin não sai do painel."; return; }
+  db_put "$(jq --arg u "$AU" '.usuarios |= map(select(.usuario != $u))' <<<"$DB")"
+  ok "'$AU' removido."
+  pausa
+}
+
+trocar_senha() {
+  read -rp "  Usuário (Enter = você): " MU; MU=${MU:-$USER_ATUAL}
+  local S H
+  read -rsp "  Nova senha: " S; echo
+  H=$(hash_s "$S")
+  if jq -e --arg u "$MU" '.usuarios[] | select(.usuario==$u)' <<<"$DB" >/dev/null; then
+    db_put "$(jq --arg u "$MU" --arg h "$H" '(.usuarios[] | select(.usuario==$u)) |= (.senha=$h)' <<<"$DB")"
+    ok "Senha de '$MU' trocada."
+  else
+    erro "Usuário não existe."
+  fi
+  pausa
+}
+
+configurar_painel() {
+  clear; msg "Servidor de usuários (jsonbin.io)"
+  local BID K U
+  read -rp "  Bin ID:    " BID
+  read -rp "  Master Key:" K
+  U="https://api.jsonbin.io/v3/b/$BID/latest"
+  if curl -fsSL -m 8 -H "X-Master-Key: $K" "$U" >/dev/null 2>&1; then
+    mkdir -p ~/ffhack; printf '%s\n%s\n' "$U" "$K" > "$CFG"
+    USERS_URL="$U"; API_KEY="$K"
+    ok "Painel configurado e testado."
+  else
+    erro "Falhou o teste - confira ID/Key e se o bin existe."
+  fi
+  pausa
+}
+
+# ---------------- jogo ----------------
+resolvido() { $ADB get-state 2>/dev/null | grep -qx device; }
+exige()     { resolvido || { erro "Sem conexão - use [1] antes."; pausa; return 1; }; }
+
+getres() {
+  local R
+  R=$($ADB shell wm size 2>/dev/null | tr -d '\r' | grep -oE '[0-9]+x[0-9]+' | head -1)
+  [ -n "$R" ] || { erro "Sem resposta do celular."; return; }
+  W=${R%x*}; H=${R#*x}
+  ok "Resolução detectada: ${W}x${H}"
+}
+
+conectar() {
+  clear
+  msg "Celular: DESENVOLVEDOR → DEPURAÇÃO SEM FIO. Mesma rede Wi-Fi nos dois."
+  read -rp "IP do celular:                        " IP
+  read -rp "Porta de PAREAMENTO (Android 11+):    " PTP
+  read -rp "Código de 6 dígitos (vazio p/ pular): " COD
+  [ -n "$COD" ] && { echo "$COD" | $ADB pair "$IP:$PTP" 2>&1 | tr -d '\r'; }
+  read -rp "Porta de CONEXÃO (tela principal):    " PTA
+  $ADB connect "$IP:$PTA" 2>&1 | tr -d '\r'
+  sleep 1
+  if resolvido; then getres; calibrar; ok "Conectado: $IP:$PTA"
+  else erro "Falhou. Confira IP/portas e aceite no celular."; fi
+  pausa
+}
+
+calibrar() {
+  FX=$(( W*86/100 )); FY=$(( H*85/100 ))
+  JX=$(( W*88/100 )); JY=$(( H*73/100 ))
+  RX=$(( W*12/100 )); RY=$(( H*88/100 ))
+  CX=$(( W/2 ));      CY=$(( H*48/100 ))
+  echo
+  echo "  Pontos de toque atuais (X Y):"
+  echo "   Tiro: $FX $FY  |  Pulo: $JX $JY  |  Correr: $RX $RY"
+  read -rp "  Ajustar tiro?   (X Y, Enter mantém)   " T; set -- $T $FX $FY; FX=$1; FY=$2
+  read -rp "  Ajustar pulo?   (X Y, Enter mantém)   " T; set -- $T $JX $JY; JX=$1; JY=$2
+  read -rp "  Ajustar correr? (X Y, Enter mantém)   " T; set -- $T $RX $RY; RX=$1; RY=$2
+  ok "Calibração salva."
+  pausa
+}
+
+abrir()  { $ADB shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; ok "Jogo abrindo..."; pausa; }
+fechar() { $ADB shell am force-stop "$PKG" >/dev/null 2>&1; ok "Jogo fechado."; pausa; }
+
+mira_aimbot() { # $1 = altura em %  $2 = nome
+  exige || return
+  local P=$1 NOM=$2 D AY i=0
+  read -rp "Duração (s) [10]: " D; D=${D:-10}
+  AY=$(( H*P/100 ))
+  $ADB shell input swipe $FX $FY $FX $FY $((D*1000+500)) &
+  msg "$NOM: ${D}s - mantenha o alvo no centro da tela."
+  while [ $i -lt $((D/2)) ]; do
+    $ADB shell input swipe $CX $((AY-8)) $CX $((AY+8)) 60 >/dev/null 2>&1 &
+    $ADB shell input swipe $CX $((AY+8)) $CX $((AY-8)) 60 >/dev/null 2>&1 &
+    sleep 1; i=$((i+1))
+  done
+  wait
+  ok "Finalizado."
+}
+tiro_cabeca() { mira_aimbot $Y_CAB   "Tiro na cabeça"; }
+tiro_pescoco(){ mira_aimbot $Y_PESC  "Tiro no pescoço"; }
+tiro_acima()  { mira_aimbot $Y_ACIMA "Acima da cabeça"; }
+
+autotiro() {
+  exige || return
+  read -rp "Duração (s) [10]: " D; D=${D:-10}
+  msg "Segurando o botão de tiro por ${D}s..."
+  $ADB shell input swipe $FX $FY $FX $FY $((D*1000))
+  ok "Autotiro pronto."
+  pausa
+}
+
+esp() { exige && { $ADB shell wm density 120 >/dev/null && ok "ESP ligado (zoom de densidade)."; pausa; }; }
+
+wall() {
+  exige || return
+  $ADB shell wm density 120 >/dev/null
+  $ADB shell settings put system screen_brightness 255 2>/dev/null
+  $ADB shell settings put secure screen_brightness 255 2>/dev/null
+  ok "WALL ligado: zoom + brilho máximo."
+  msg "Ver pessoa por cima de parede solida de verdade e coisa de overlay (injeção) - este modo puxa tudo que a tela ainda deixa ver."
+  pausa
+}
+
+restaurar_visao() {
+  exige && {
+    $ADB shell wm density reset >/dev/null
+    $ADB shell settings put system screen_brightness 180 2>/dev/null
+    $ADB shell settings put secure screen_brightness 180 2>/dev/null
+    ok "Visão restaurada."; pausa; }
+}
+
+fps120() {
+  exige || return
+  $ADB shell service call SurfaceFlinger 1008 i 120 >/dev/null 2>&1
+  ok "Teto de frames liberado (se o painel for 120Hz+)."
+  pausa
+}
+
+antireco() {
+  exige || return
+  read -rp "Duração (s) [10]: " D; D=${D:-10}
+  local i=0
+  msg "Antireco ${D}s."
+  while [ $i -lt $((D*5)) ]; do
+    $ADB shell input swipe $CX $CY $CX $((CY-5)) 35 >/dev/null
+    $ADB shell input swipe $CX $((CY-5)) $CX $CY 35 >/dev/null
+    i=$((i+1))
+  done
+  ok "Antireco finalizado."
+  pausa
+}
+
+velocidade() {
+  exige || return
+  local i=0
+  msg "Velocidade: correr + pulo por 8s."
+  while [ $i -lt 8 ]; do
+    $ADB shell input swipe $RX $RY $RX $((RY-140)) 250 >/dev/null
+    sleep 0.2
+    $ADB shell input tap $JX $JY >/dev/null
+    sleep 0.3
+    i=$((i+1))
+  done
+  ok "Feito."
+  pausa
+}
+
+voo() {
+  exige || return
+  local i=0
+  $ADB shell input swipe $RX $RY $RX $((RY-140)) 12000 &
+  msg "Voo: corrida contínua + pulos por 12s."
+  while [ $i -lt 12 ]; do
+    $ADB shell input tap $JX $JY >/dev/null
+    sleep 0.4
+    i=$((i+1))
+  done
+  wait
+  ok "Feito."
+  pausa
+}
+
+moedas() {
+  exige || return
+  if $ADB shell su -c "id -u" 2>/dev/null | tr -d '\r' | grep -qx 0; then
+    $ADB shell su -c "find /data/data/$PKG/shared_prefs -name '*.xml' -exec sed -i 's|<value>[0-9]*</value>|<value>999999</value>|g' {} +"
+    ok "Vals das prefs → 999999. Feche ([3]) e reabra o jogo."
+  else
+    erro "Aparelho sem root - moedas/skins não rodam."
+  fi
+  pausa
+}
+
+fantasma() {
+  exige || return
+  local FLAG
+  FLAG=$($ADB shell settings get global adb_enabled 2>/dev/null | tr -d '\r')
+  if [ "$FLAG" = "0" ]; then
+    $ADB shell settings put global adb_enabled 1
+    ok "Flag ADB revisada. Reconecte com [1]."
+  else
+    $ADB shell settings put global adb_enabled 0
+    ok "Flag ADB ocultada. ENTRE NA PARTIDA AGORA."
+  fi
+  pausa
+}
+
+update() {
+  msg "Baixando atualização de: $SERVIDOR/FFHACK"
+  if curl -fsSL "$SERVIDOR/FFHACK" -o "$HOME/ffhack/FFHACK.new" 2>/dev/null || \
+     wget -qO "$HOME/ffhack/FFHACK.new" "$SERVIDOR/FFHACK"; then
+    sed -i 's/\r$//' "$HOME/ffhack/FFHACK.new"
+    mv -f "$HOME/ffhack/FFHACK.new" "$HOME/ffhack/FFHACK"
+    ok "Atualizado. Saia ([0]) e rode de novo."
+  else
+    erro "Falha no download."
+  fi
+  pausa
+}
+
+inicializar_painel
+login
+
+# ============================ MENU ============================
+while true; do
+  clear
+  banner
+  echo "  Logado: ${USER_ATUAL:-?} [${NIVEL:-?}]"
+  echo "  [1]  Conectar           [2]  Abrir jogo       [3]  Fechar jogo"
+  echo "  [4]  Calibrar botões"
+  echo "  [5]  Tiro na cabeça     [6]  Tiro no pescoço"
+  echo "  [7]  Acima da cabeça    [8]  Autotiro"
+  echo "  [9]  ESP (zoom)         [10] WALL             [11] Restaurar visão"
+  echo "  [12] FPS 120"
+  echo "  [13] Antireco           [14] Velocidade       [15] Voo"
+  echo "  [16] Moedas/Skins (root)  [17] Fantasma"
+  echo "  [18] Atualizar código   [19] Configurar painel"
+  echo "  [20] Usuários (roughen)"
+  echo "  [0]  Sair"
+  read -rp "  → " op
+  case $op in
+    1) conectar ;;         2) abrir ;;            3) fechar ;;
+    4) calibrar ;;         5) tiro_cabeca ;;      6) tiro_pescoco ;;
+    7) tiro_acima ;;       8) autotiro ;;
+    9) esp ;;              10) wall ;;            11) restaurar_visao ;;
+    12) fps120 ;;
+    13) antireco ;;        14) velocidade ;;      15) voo ;;
+    16) moedas ;;          17) fantasma ;;
+    18) update ;;          19) configurar_painel ;;
+    20) painel_usuario ;;
+    0) ok "Até mais."; exit 0 ;;
+  esac
+done
+exit 0
+
+:SECAO_CMD
+@echo off
+title FFHACK v4.1 - Painel + Depuracao Wi-Fi
+setlocal EnableDelayedExpansion
+set SERVIDOR=https://roughendev123.github.io/ffhack
+set USERS_URL=https://api.jsonbin.io/v3/b/COLE_O_ID/latest
+set API_KEY=COLE_A_MASTER_KEY
+set PKG=com.dts.freefireth
+set CFG=%TEMP%\ffhack_cfg.txt
+set CACHE=%TEMP%\ff_db.json
+set W=1080 & set H=1920
+
+if exist "%CFG%" (
+ set /a LN=0
+ for /f "usebackq delims=" %%x in (`type "%CFG%"`) do (
+  set /a LN+=1
+  if !LN!==1 set USERS_URL=%%x
+  if !LN!==2 set API_KEY=%%x
+ )
+)
+
+for /f "tokens=*" %%r in ('adb shell wm size 2^>nul ^| findstr /r /[0-9]x[0-9]/') do set "RES=%%r"
+if defined RES for /f "tokens=3 delims=: " %%a in ("%RES%") do set "DIM=%%a"
+if defined DIM for /f "tokens=1,2 delims=x" %%a in ("%DIM%") do set W=%%a & set H=%%b
+set /a FX=W*86/100, FY=H*85/100, JX=W*88/100, JY=H*73/100, RX=W*12/100, RY=H*88/100, CX=W/2, CY=H*48/100
+set /a RYM=RY-140, CY5=CY-5, AYC=H*40/100, AYP=H*46/100, AYI=H*32/100
+set TENT=0
+set USER_ATUAL=
+set NIVEL=
+goto LOGIN
+
+:HASH
+set H=
+for /f "usebackq delims=" %%x in ('powershell -NoProfile -Command "[BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes((gc '%~1' -Raw).Trim()))).Replace('-','').ToLower()"') do set H=%%x
+exit /b
+
+:LOGIN
+del /q "%TEMP%\ff_u.txt" "%TEMP%\ff_s.txt" "%TEMP%\ff_res.txt" 2>nul
+> "%TEMP%\ff_u.txt" set /p _="  Usuario: "
+> "%TEMP%\ff_s.txt" set /p _="  Senha:   "
+call :HASH "%TEMP%\ff_s.txt"
+powershell -NoProfile -Command "$u=(gc '%TEMP%\ff_u.txt' -Raw).Trim(); $h='%H%'; $url='%USERS_URL%'; $key='%API_KEY%'; $us=$null; if($url -notlike '*COLE_O_ID*'){ try { $r=irm -Uri $url -Headers @{'X-Master-Key'=$key} -TimeoutSec 8; $us=$r.record.usuarios; $c=ConvertTo-Json -InputObject (@{usuarios=$us}) -Depth 6 -Compress; Set-Content -Path '%CACHE%' -Value $c } catch { if(Test-Path '%CACHE%'){ $us=(ConvertFrom-Json (gc '%CACHE%' -Raw)).usuarios; Write-Host '  [off-line: cache local]' } } }; if(-not $us -or $us.Count -eq 0){ Set-Content -Path '%TEMP%\ff_res.txt' -Value 'VAZIO' } else { $m=$null; foreach($x in $us){ if($x.usuario -eq $u -and $x.senha -eq $h){ $m=$x } }; if($m){ Set-Content -Path '%TEMP%\ff_res.txt' -Value ('OK|'+$m.nivel) } else { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO' } }"
+set LOG=
+for /f "usebackq tokens=1,2 delims=|" %%a in ("%TEMP%\ff_res.txt") do (set LOG=%%a & set NIVEL=%%b)
+if "%LOG%"=="OK" (
+ for /f "usebackq eol= delims=" %%x in ("%TEMP%\ff_u.txt") do set "USER_ATUAL=%%x"
+ goto MENU
+)
+if "%LOG%"=="VAZIO" goto SETUP
+echo.
+set /a TENT+=1
+if %TENT% GEQ 3 (echo   3 falhas - saindo. & timeout /t 2 >nul & exit /b)
+echo   Usuario ou senha invalidos.
+timeout /t 1 /nobreak >nul
+goto LOGIN
+
+:SETUP
+> "%TEMP%\ff_s.txt" set /p _="  PRIMEIRO USO - defina a senha do roughen: "
+> "%TEMP%\ff_s2.txt" set /p _="  Confira a senha: "
+call :HASH "%TEMP%\ff_s.txt"
+set H1=%H%
+call :HASH "%TEMP%\ff_s2.txt"
+if not "%H%"=="%H1%" (
+ echo   Senhas diferentes.
+ timeout /t 2 >nul
+ goto LOGIN
+)
+echo %USERS_URL% | findstr COLE_O_ID >nul
+if not errorlevel 1 (
+ > "%CACHE%" echo {"usuarios":[{"usuario":"roughen","senha":"%H%","nivel":"admin"}]}
+ echo   roughen criado (modo local - use [19] para ligar o servidor).
+ timeout /t 2 >nul
+ goto LOGIN
+)
+powershell -NoProfile -Command "try { $rec=@{usuarios=@([pscustomobject]@{usuario='roughen';senha='%H%';nivel='admin'})}; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'OK' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO' }"
+echo   roughen criado (admin).
+timeout /t 2 >nul
+goto LOGIN
+
+:MENU
+cls
+echo  ================================================
+echo   FFHACK v4.1  -  Painel + Depuracao Wi-Fi
+echo  ================================================
+echo   Logado: %USER_ATUAL% [%NIVEL%]
+echo   [1] Conectar            [2] Abrir    [3] Fechar
+echo   [4] Calibrar botoes
+echo   [5] Tiro na cabeca      [6] Tiro no pescoco
+echo   [7] Acima da cabeca     [8] Autotiro
+echo   [9] ESP (zoom)          [10] WALL    [11] Restaurar visao
+echo   [12] FPS 120
+echo   [13] Antireco           [14] Velocidade  [15] Voo
+echo   [16] Moedas/Skins (root)  [17] Fantasma
+echo   [18] Atualizar codigo   [19] Configurar painel
+echo   [20] Usuarios (roughen)
+echo   [0] Sair
+set "op="
+set /p "op=Opcao: "
+if "%op%"=="0"  exit /b
+if "%op%"=="1"  goto CON
+if "%op%"=="2"  goto ABRIR
+if "%op%"=="3"  goto FECHAR
+if "%op%"=="4"  goto CALIB
+if "%op%"=="5"  (set AY=%AYC% & goto AIMX)
+if "%op%"=="6"  (set AY=%AYP% & goto AIMX)
+if "%op%"=="7"  (set AY=%AYI% & goto AIMX)
+if "%op%"=="8"  goto ATIRO
+if "%op%"=="9"  goto ESP
+if "%op%"=="10" goto WALL
+if "%op%"=="11" goto REST
+if "%op%"=="12" goto FPS
+if "%op%"=="13" goto RECO
+if "%op%"=="14" goto VEL
+if "%op%"=="15" goto VOO
+if "%op%"=="16" goto MOEDAS
+if "%op%"=="17" goto FANT
+if "%op%"=="18" goto UPD
+if "%op%"=="19" goto CONFIG
+if "%op%"=="20" goto USUARIOS
+goto MENU
+
+:CON
+set /p IP="IP do celular (mesma rede Wi-Fi): "
+set /p PT="Porta (tela do celular): "
+adb connect %IP%:%PT%
+adb wait-for-device
+goto RET
+
+:ABRIR
+adb shell monkey -p %PKG% -c android.intent.category.LAUNCHER 1 >nul
+goto RET
+
+:FECHAR
+adb shell am force-stop %PKG%
+goto RET
+
+:CALIB
+echo   (valores atuais)
+echo   Tiro %FX%,%FY%  |  Pulo %JX%,%JY%  |  Correr %RX%,%RY%
+set /p TF="Tiro X   [Enter mantem]: "
+if not "%TF%"=="" set FX=%TF%
+set /p TF="Tiro Y   [Enter mantem]: "
+if not "%TF%"=="" set FY=%TF%
+set /p TF="Pulo X   [Enter mantem]: "
+if not "%TF%"=="" set JX=%TF%
+set /p TF="Pulo Y   [Enter mantem]: "
+if not "%TF%"=="" set JY=%TF%
+set /p TF="Correr X [Enter mantem]: "
+if not "%TF%"=="" set RX=%TF%
+set /p TF="Correr Y [Enter mantem]: "
+if not "%TF%"=="" set RY=%TF%
+echo   Calibracao aplicada nesta sessao.
+goto RET
+
+:AIMX
+set /a A1=%AY%-8 & set /a A2=%AY%+8
+start "" adb shell input swipe %FX% %FY% %FX% %FY% 10500
+for /l %%i in (1,1,10) do @(
+ adb shell input swipe %CX% %A1% %CX% %A2% 60
+ timeout /t 1 >nul
+)
+goto RET
+
+:ATIRO
+echo  Segurando o botao de tiro por 10s...
+timeout /t 10 /nobreak >nul
+goto RET
+
+:ESP
+adb shell wm density 120
+goto RET
+
+:WALL
+adb shell wm density 120
+adb shell settings put system screen_brightness 255
+adb shell settings put secure screen_brightness 255
+echo   WALL ligado: zoom + brilho maximo.
+goto RET
+
+:REST
+adb shell wm density reset
+adb shell settings put system screen_brightness 180
+adb shell settings put secure screen_brightness 180
+goto RET
+
+:FPS
+adb shell service call SurfaceFlinger 1008 i 120 >nul
+goto RET
+
+:RECO
+for /l %%i in (1,1,25) do @(
+ adb shell input swipe %CX% %CY% %CX% %CY5% 35
+ adb shell input swipe %CX% %CY5% %CX% %CY% 35
+)
+goto RET
+
+:VEL
+for /l %%i in (1,1,8) do @(
+ adb shell input swipe %RX% %RY% %RX% %RYM% 250
+ timeout /t 1 >nul
+ adb shell input tap %JX% %JY%
+)
+goto RET
+
+:VOO
+start "" adb shell input swipe %RX% %RY% %RX% %RYM% 12000
+for /l %%i in (1,1,12) do @(
+ adb shell input tap %JX% %JY%
+ timeout /t 1 >nul
+)
+goto RET
+
+:MOEDAS
+adb shell su -c "id -u" 2>nul | findstr /b "0" >nul
+if errorlevel 1 (
+ echo   Sem root neste aparelho.
+ goto RET
+)
+adb shell su -c "find /data/data/%PKG%/shared_prefs -name *.xml -exec sed -i s|<value>[0-9]*</value>|<value>999999</value>|g {} +"
+echo   Prefs -^> 999999. Feche o jogo ([3]) e abra de novo.
+goto RET
+
+:FANT
+adb shell settings get global adb_enabled 2>nul | findstr /b "0" >nul
+if not errorlevel 1 (
+ adb shell settings put global adb_enabled 1
+ echo   Flag ADB REVISADA. Reconecte com [1].
+ goto RET
+)
+adb shell settings put global adb_enabled 0
+echo   Flag ADB OCULTA. Entre na partida AGORA.
+goto RET
+
+:UPD
+curl -fsSL -o FFHACK.new %SERVIDOR%/FFHACK
+if errorlevel 1 (
+ echo   Falha no download.
+ goto RET
+)
+move /y FFHACK.new FFHACK_novo.bat >nul
+echo   Salvo como FFHACK_novo.bat - apos sair, troque o antigo por ele.
+goto RET
+
+:CONFIG
+set /p BID="  Bin ID do jsonbin: "
+set /p MK="  Master Key: "
+powershell -NoProfile -Command "try { $u='https://api.jsonbin.io/v3/b/%BID%/latest'; irm -Uri $u -Headers @{'X-Master-Key'='%MK%'} -TimeoutSec 8; Set-Content -Path '%CFG%' -Value @($u,'%MK%') -Encoding ASCII; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'OK' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO' }"
+set /p R=<"%TEMP%\ff_res.txt"
+if "%R%"=="OK" echo   Painel configurado. Reinicie o FFHACK para aplicar.
+if "%R%"=="ERRO" echo   Falhou - confira ID e Key.
+goto RET
+
+:USUARIOS
+if not "%NIVEL%"=="admin" (
+ echo   Area restrita ao roughen.
+ goto RET
+)
+:USM
+cls
+echo   PAINEL DE USUARIOS - roughen
+echo    [n] Ver   [v] Criar   [a] Apagar   [s] Trocar senha   [0] Voltar
+set "s="
+set /p "s=Escolha: "
+if "%s%"=="n" goto ULIST
+if "%s%"=="v" goto UNOVO
+if "%s%"=="a" goto UDEL
+if "%s%"=="s" goto UPASS
+if "%s%"=="0" goto MENU
+goto USM
+
+:ULIST
+powershell -NoProfile -Command "try { $us=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record.usuarios; foreach($x in $us){ Write-Host ('  '+$x.usuario+'   ['+$x.nivel+']') } } catch { Write-Host '  Sem conexao com o servidor de usuarios.' }"
+goto RET
+
+:UNOVO
+> "%TEMP%\ff_nu.txt" set /p _="  Novo usuario (sem espacos): "
+> "%TEMP%\ff_ns.txt" set /p _="  Senha dele: "
+call :HASH "%TEMP%\ff_ns.txt"
+powershell -NoProfile -Command "$u=(gc '%TEMP%\ff_nu.txt' -Raw).Trim(); $h='%H%'; try { $rec=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record; $existe=$false; foreach($x in $rec.usuarios){ if($x.usuario -eq $u){ $existe=$true } }; if($existe){ Set-Content -Path '%TEMP%\ff_res.txt' -Value 'JAEXISTE' } else { $rec.usuarios += [pscustomobject]@{usuario=$u;senha=$h;nivel='user'}; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'CRIADO' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO_NET' }"
+set /p R=<"%TEMP%\ff_res.txt"
+if "%R%"=="CRIADO" echo   Criado - ele so precisa logar em qualquer terminal.
+if "%R%"=="JAEXISTE" echo   Ja existe um usuario com esse nome.
+if "%R%"=="ERRO_NET" echo   Servidor de usuarios fora - tente de novo.
+goto RET
+
+:UDEL
+set /p AU="  Apagar usuario (roughen e protegido): "
+if "%AU%"=="roughen" (
+ echo   O admin nao sai do painel.
+ goto RET
+)
+powershell -NoProfile -Command "try { $rec=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record; $keep=@(); foreach($x in $rec.usuarios){ if($x.usuario -ne '%AU%'){ $keep += $x } }; $rec.usuarios = $keep; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'REMOVIDO' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO_NET' }"
+set /p R=<"%TEMP%\ff_res.txt"
+if "%R%"=="REMOVIDO" echo   Removido.
+if "%R%"=="ERRO_NET" echo   Servidor fora - tente de novo.
+goto RET
+
+:UPASS
+set /p MP="  Trocar senha de (Enter = voce): "
+if "%MP%"=="" set MP=%USER_ATUAL%
+> "%TEMP%\ff_ns.txt" set /p _="  Nova senha: "
+call :HASH "%TEMP%\ff_ns.txt"
+powershell -NoProfile -Command "try { $rec=(irm -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%'}).record; foreach($x in $rec.usuarios){ if($x.usuario -eq '%MP%'){ $x.senha='%H%' } }; $b=ConvertTo-Json -InputObject $rec -Depth 6 -Compress; irm -Method Put -Uri '%USERS_URL%' -Headers @{'X-Master-Key'='%API_KEY%';'Content-Type'='application/json'} -Body $b; Set-Content -Path '%TEMP%\ff_res.txt' -Value 'TROCADA' } catch { Set-Content -Path '%TEMP%\ff_res.txt' -Value 'ERRO_NET' }"
+set /p R=<"%TEMP%\ff_res.txt"
+if "%R%"=="TROCADA" echo   Senha trocada.
+if "%R%"=="ERRO_NET" echo   Servidor fora - tente de novo.
+goto RET
+
+:RET
+echo.
+pause
+goto MENU
