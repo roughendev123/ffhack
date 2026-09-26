@@ -422,7 +422,7 @@ if exist "%CFG%" (
  )
 )
 
-for /f "tokens=*" %%r in ('adb shell wm size 2^>nul ^| findstr /r /[0-9]x[0-9]/') do set "RES=%%r"
+for /f "tokens=*" %%r in ('adb shell wm size 2^>nul ^| findstr /r "[0-9]x[0-9]"') do set "RES=%%r"
 if defined RES for /f "tokens=3 delims=: " %%a in ("%RES%") do set "DIM=%%a"
 if defined DIM for /f "tokens=1,2 delims=x" %%a in ("%DIM%") do set W=%%a & set H=%%b
 set /a FX=W*86/100, FY=H*85/100, JX=W*88/100, JY=H*73/100, RX=W*12/100, RY=H*88/100, CX=W/2, CY=H*48/100
