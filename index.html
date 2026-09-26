@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FFHACK v4.1 — Painel + Depuração Wi-Fi</title>
+<style>
+ body{background:#0b0f14;color:#e6edf3;font-family:system-ui,monospace;display:flex;justify-content:center;padding:40px}
+ .card{max-width:580px;line-height:1.7}
+ h1{color:#ff5722}
+ code,pre{background:#161b22;border-radius:6px}
+ code{padding:2px 6px}
+ pre{padding:12px;overflow:auto}
+ a.btn{display:inline-block;background:#ff5722;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin:6px 4px 6px 0}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>FFHACK v4.1</h1>
+<p>Hack de Free Fire por <b>Depuração Wi‑Fi</b>, com <b>painel de usuários</b>: o admin
+<code>roughen</code> cria contas e cada conta dá acesso ao hack inteiro (cabeça, pescoço,
+acima da cabeça, ESP, WALL, antireco, voo...). Um único arquivo, roda no
+<b>Termux</b> e no <b>CMD</b>.</p>
+<a class="btn" href="FFHACK" download>⬇ Baixar FFHACK</a>
+<h2>Termux</h2>
+<pre><code>pkg install -y android-tools curl wget jq
+curl -O https://roughendev123.github.io/ffhack/FFHACK
+sed -i 's/\r$//' FFHACK
+bash FFHACK</code></pre>
+<h2>Windows (CMD)</h2>
+<pre><code>curl -o FFHACK.bat https://roughendev123.github.io/ffhack/FFHACK
+FFHACK.bat</code></pre>
+<h2>No celular que joga</h2>
+<p>Opções do desenvolvedor → <b>Depuração sem fio</b> → emparelhar (Android 11+) ou
+<code>adb tcpip 5555</code> (Android ≤10). Mesma rede Wi‑Fi. Depois, logue no painel
+e use a opção <b>[1]</b>.</p>
+</div>
+</body>
+</html>
