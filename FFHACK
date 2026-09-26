@@ -445,11 +445,16 @@ set /p _="  Usuario: "
 set /p _="  Senha:   "
 > "%TEMP%\ff_s.txt" echo !_!
 call :HASH "%TEMP%\ff_s.txt"
-if not defined H echo   [DEBUG] HASH VAZIO - o calculo de hash falhou
+echo   [DEBUG] HASH=%H%
 set "FF_HASH=%H%"
 set "FF_FILE=%TEMP%\ff_u.txt"
 echo   [DEBUG] URL=[%USERS_URL%]
-if not exist "%TEMP%\ff_res.txt" echo   [DEBUG] ff_res.txt NAO EXISTE - o powershel nao gravou resposta
+echo   [DEBUG] TEMP=[%TEMP%]
+if exist "%TEMP%\ff_res.txt" (
+  echo   [DEBUG] ff_res.txt EXISTE
+) else (
+  echo   [DEBUG] ff_res.txt NAO EXISTE apos o powershel
+)
 set "FF_URL=%USERS_URL%"
 set "FF_KEY=%API_KEY%"
 set "FF_CACHE=%CACHE%"
@@ -458,11 +463,11 @@ powershell -NoProfile -EncodedCommand JABoAD0AJABlAG4AdgA6AEYARgBfAEgAQQBTAEgAOw
 set LOG=
 for /f "usebackq tokens=1,2 delims=|" %%a in ("%TEMP%\ff_res.txt") do (set LOG=%%a & set NIVEL=%%b)
 echo   [DEBUG] LOG=[%LOG%]
-if "%LOG%"=="OK" (
+if "%LOG%"=="OK*" (
  for /f "usebackq eol= delims=" %%x in ("%TEMP%\ff_u.txt") do set "USER_ATUAL=%%x"
  goto MENU
 )
-if "%LOG%"=="VAZIO" goto SETUP
+if "%LOG%"=="VAZIO*" goto SETUP
 echo.
 set /a TENT+=1
 if %TENT% GEQ 3 (echo   3 falhas - saindo. & timeout /t 2 >nul & exit /b)
